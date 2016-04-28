@@ -1,9 +1,10 @@
-import numpy
 import pickle
 import copy
 import random
 from collections import defaultdict
+import sys
 
+import numpy
 
 '''
     next: test
@@ -16,7 +17,12 @@ from collections import defaultdict
     o: output
     h: hidden
 '''
-numpy.random.seed(1)
+
+
+
+def debug_print(s):
+    if not __debug__:
+        print(s)
 
 
 def create_one_hot(index, size):
@@ -26,7 +32,6 @@ def create_one_hot(index, size):
 
 
 def create_map(fname):
-    
     '''  file: word_pos word_pos .... '''
     x_ids = defaultdict(lambda: len(x_ids))
     y_ids = defaultdict(lambda: len(y_ids))
@@ -42,7 +47,6 @@ def create_map(fname):
     x_size, y_size = len(x_ids), len(y_ids)
     
     for x_list, y_list in x_y_list:
-
         x_arrays, y_arrays = list(), list()
         for x, y in zip(x_list, y_list):
             x_arrays.append(create_one_hot(x, x_size))
@@ -61,7 +65,9 @@ def initialize(node_num, x_num, y_num):
         x_num: number of vocabluary
         y_num: number of pos
     '''
-    random_array = lambda shape: numpy.random.rand(*shape) - .5
+    random_array = lambda shape: \
+        (numpy.random.uniform(-numpy.sqrt(1. / shape[-1]), numpy.sqrt(1. / shape[-1]), shape)) 
+    #random_array = lambda shape: (numpy.random.randint(-10, 10, (shape)) * .1)
     hidden_layer = list()
     output_layer = list()
     # weight rx
@@ -91,36 +97,37 @@ def forward_rnn(weight_rx, weight_rh, bias_r, weight_oh, bias_o, x):
       y: index of max output probability
     '''
     x_length = len(x)
-   
+    time = 0
     hidden, probs, y = numpy.zeros((x_length, bias_r.shape[0])), numpy.zeros((x_length, bias_o.shape[0])), numpy.zeros(x_length)
 
-    for time in range(x_length):
-        if time > 0:
-            hidden[time] = numpy.tanh(numpy.dot(weight_rx, x[time]) + numpy.dot(weight_rh, hidden[time - 1]) + bias_r)
+    for time in range(0, x_length):
+        if time == 0:
+            hidden[time] = numpy.tanh(weight_rx.dot(x[time]) + bias_r)
         else:
-            hidden[time] = (numpy.tanh(numpy.dot(weight_rx, x[time]) + bias_r))
-
-        probs[time] = softmax(numpy.dot(weight_oh, hidden[time]) + bias_o)
+            hidden[time] = numpy.tanh(weight_rx.dot(x[time]) + weight_rh.dot(hidden[time - 1]) + bias_r)
+        probs[time] = softmax(weight_oh.dot(hidden[time]) + bias_o)
         y[time] = numpy.argmax(probs[time], 0)
+        
     return hidden, probs, y
 
 
 def gradient_rnn(weight_rx, weight_rh, bias_r, weight_oh, bias_o, x, hidden, probs, y_, net_info):
-
     d_weight_rx, d_weight_rh, d_bias_r, d_weight_oh, d_bias_o = *net_info[0], *net_info[1]
     delta_r_ = numpy.zeros(len(bias_r))
 
-    for time in range(len(x) - 1, -1, -1):
-        delta_o_ = y_[time] - probs[time]
-        d_weight_oh  += ((numpy.outer(hidden[time], delta_o_)).T)
+    for time in range(len(x) - 1, -1, -1): 
+        delta_o_ =  probs[time] - y_[time]
+        d_weight_oh  += numpy.outer(delta_o_, hidden[time].T)
         d_bias_o += delta_o_
-        delta_r = numpy.dot(delta_r_, weight_rh) + numpy.dot(delta_o_, weight_oh)
+        delta_r = weight_rh.dot(delta_r_) + delta_o_.dot(weight_oh)
         delta_r_ = delta_r * (1 - hidden[time]**2)
-        d_weight_rx += numpy.outer(x[time], delta_r_).T
+        d_weight_rx += numpy.outer(delta_r_, x[time].T)
         d_bias_r += delta_r_
 
         if time != 0:
-            d_weight_rh += numpy.outer(hidden[time-1], delta_r_)
+            d_weight_rh += numpy.outer(delta_r_, hidden[time - 1])
+
+    
 
     update_weights(weight_rx, weight_rh, bias_r, weight_oh, bias_o, 
         d_weight_rx, d_weight_rh, d_bias_r, d_weight_oh, d_bias_o, lam)
@@ -129,14 +136,16 @@ def gradient_rnn(weight_rx, weight_rh, bias_r, weight_oh, bias_o, x, hidden, pro
 
 def update_weights(weight_rx, weight_rh, bias_r, weight_oh, bias_o, 
         d_weight_rx, d_weight_rh, d_bias_r, d_weight_oh, d_bias_o, lam):
-    weight_rx += lam * d_weight_rx
-    weight_rh += lam * d_weight_rh
-    bias_r += lam * d_bias_r
-    weight_oh += lam * d_weight_oh
-    bias_o = lam * d_bias_o
+    weight_rx -= lam * d_weight_rx
+    weight_rh -= lam * d_weight_rh
+    bias_r -= lam * d_bias_r
+    weight_oh -= lam * d_weight_oh
+    bias_o -= lam * d_bias_o
+
+
 
 def copy_layer(layer):
-    return [x.copy() for x in layer]
+    return [numpy.zeros(x.shape) for x in layer]
 
 
 def main():
@@ -146,32 +155,46 @@ def main():
     x_num, y_num = len(x_ids), len(y_ids)
     hidden_layer, output_layer = initialize(node_num, x_num, y_num)
     d_hidden_layer, d_output_layer = copy_layer(hidden_layer), copy_layer(output_layer)
+    true_num = 100000
+    global lam
     for _ in range(iteration):
-        print(_) 
         accuracy = 0
         random.shuffle(word_label_list) 
-        for features, labels in word_label_list[:300]:
-            #print([numpy.argmax(y) for y in labels])
+        count = 0
+        for features, labels in word_label_list[:600]:
+            count += 1
             hidden, probs, y_ = forward_rnn(*hidden_layer, *output_layer, features)
-            #print(hidden, probs, y_)
             gradient_rnn(*hidden_layer, *output_layer, features, hidden, probs, 
                     labels, (copy_layer(d_hidden_layer), copy_layer(d_output_layer)))
-            #update_weights(*hidden_layer, *output_layer, *delta_h, *delta_o, lam)
-            #hidden, probs, y_ = forward_rnn(*hidden_layer, *output_layer, features)
-            #print(hidden, probs, y_)
-            accuracy += numpy.sum(numpy.argmax(labels) == y_)
-        print(y_)   
-        print(accuracy) 
+            labels = numpy.argmax(labels, axis=1)
+            accuracy += numpy.sum(labels == y_)
+        if accuracy < true_num: 
+            true_num = accuracy
+            lam *= 0.5
+        print("\tpredict:  {}\n\tanswer :  {}".format(y_.astype(int), labels)) 
+        print(_, accuracy)
+        print()
+        print()
+    debug_print("Hidden Layer's Parameter\n  weight_rx:\n{}\n  weight_rh:\n{}\n  bias_r   :\n{}\n".format(*hidden_layer)) 
+    debug_print("Output Layer's Parameter\n  weight_oh:\n{}\n  bias_o   :\n{}\n".format(*output_layer)) 
             
     pickle.dump((hidden_layer, output_layer), open("layer.pkl", 'wb'))
 
 
 if __name__ == "__main__":
+
     import sys
-    iteration = 100   
-    lam = 0.00001
-    
-    node_num = 64
+    iteration = 2
+    lam = 0.005
+
+    node_num = 2
+    if "-it" in sys.argv:
+        iteration = int(sys.argv[sys.argv.index("-it") + 1])
+    elif "-n" in sys.argv:
+        node_num = int(sys.argv[sys.argv.index("-n") + 1])
+
     fname_word_label = "" if len(sys.argv) == 1 else sys.argv[1]
 
     main()
+
+
