@@ -1,9 +1,16 @@
+/*
+ * unigram model file is made by chapter01.
+ * usage: ./a.out model.txt test.txt
+*/
+
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <ostream>
 #include <fstream>
 #include <math.h>
 #include <vector>
+
 
 #include "../nlpmodules/process.hpp"
 
@@ -11,9 +18,9 @@ using namespace std;
 
 #define LAMBDA 0.95
 #define LAMBDA_UNK 0.05
-#define VOCAB 1000000
+#define VOCAB 100
 
-const float UNK_PROB = LAMBDA_UNK / VOCAB;
+const double UNK_PROB = LAMBDA_UNK / VOCAB;
 
 struct Edge {
   Edge() : begin(), end() {}
@@ -22,8 +29,8 @@ struct Edge {
 };
 
 
-typedef map<string, float> word_probability;
-typedef map<int, float> score_map;
+typedef map<string, double> word_probability;
+typedef map<int, double> score_map;
 typedef map<int, Edge> edge_map;
 
 
@@ -31,7 +38,7 @@ word_probability load_model(char *fname) {
   word_probability wp;
   ifstream ifs(fname);
   string line;
-  float prob;
+  double prob;
   if (!ifs) {
     cout << fname << " is not found." << endl;
     exit (EXIT_FAILURE);
@@ -39,11 +46,10 @@ word_probability load_model(char *fname) {
     while (getline(ifs, line, '\n')) {
       stringstream ss_line(line);
       vector<string> words = stringSplit(line, '\t');
-      sscanf(words[1].c_str(), "%f", &prob);
+      sscanf(words[1].c_str(), "%lf", &prob);
       wp[words[0]] = prob;
     }
   }
-  cout << endl;
   return wp;
 }
 
@@ -53,17 +59,18 @@ edge_map forward(string sentence, word_probability &wp) {
   edge_map best_edge;
   best_edge[0] =  Edge(-1, 0);
   best_score[0] = 0.0;
-  for (int end = 1; end <= sentence.length(); end ++) {
-    best_score[end] = 10000;
-    for (int begin = 0; begin != end; begin ++) {
-      int word_len = end - begin;
-      string sub = sentence.substr(begin, word_len);
-      if (wp.find(sub) != wp.end() || word_len == 1) {
-        float prob = wp.find(sub) != wp.end() ? wp[sub] * LAMBDA : UNK_PROB;
-        float sub_score = best_score[begin] - log(prob);
+
+  for (int end = 3; end <= sentence.length(); end += 3) {
+    best_score[end] = 10000000000;
+    for (int begin = 0; begin < end; begin += 3) {
+      int word_len = (end - begin) ;
+      int begin_index = begin ;
+      string sub = sentence.substr(begin_index, word_len);
+      if (wp.find(sub) != wp.end() || word_len == 3) {
+        double prob = wp.find(sub) != wp.end() ? wp[sub] * LAMBDA : UNK_PROB;
+        double sub_score = best_score[begin] - log(prob);
         if (sub_score < best_score[end]) {
           best_score[end] = sub_score;
-          cout << end <<  sub << " " << best_score[end] << endl;
           best_edge[end] = Edge(begin, end);
         }
       }
@@ -78,8 +85,7 @@ vector<string> back_step(string sentence, edge_map best_edge) {
   vector<string> words;
   string word;
   while (next_edge.begin != -1) {
-    word = sentence.substr(next_edge.begin, next_edge.end - next_edge.begin);
-    cout << next_edge.begin << " " << next_edge.end << " " << word << endl;
+    word = sentence.substr(next_edge.begin, (next_edge.end - next_edge.begin));
     words.insert(words.begin(), word);
     next_edge = best_edge[next_edge.begin];
   }
@@ -89,20 +95,24 @@ vector<string> back_step(string sentence, edge_map best_edge) {
 
 
 void segment(char *model_f, char *test_f) {
+  char output_f[] = "./data/result.txt";
   ifstream ifs(test_f);
+  ofstream ofs(output_f);
   string sentence;
-  word_probability wp = load_model(model_f);
   if (!ifs) {
     cout << test_f << " is not found." << endl;
     exit (EXIT_FAILURE);
   }
-  cout << "start segment" << test_f << endl;
+  // load unigram probability
+  cout << "load model file" << endl;
+  word_probability wp = load_model(model_f);
+  cout << "start segment" << endl;
   while (getline(ifs, sentence, '\n')) {
     edge_map best_edge = forward(sentence, wp);
     vector<string> words = back_step(sentence, best_edge);
     for (vector<string>::iterator it = words.begin(); it != words.end(); it ++)
-      cout << *it << " ";
-    cout << endl;
+      ofs << *it << " ";
+    ofs << '\n';
   }
 }
 
